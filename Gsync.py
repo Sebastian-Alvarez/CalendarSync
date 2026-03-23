@@ -9,14 +9,14 @@ from googleapiclient.errors import HttpError
 # -------------------------------------------------- Var. Globales ------------------------------------------------------------------
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 BASE_DIR = Path(__file__).resolve().parent
-saCredentials = BASE_DIR / "secrets" / "service-account.json"
-notionSecret = BASE_DIR / "secrets" / "notion.txt"
+saCredentials = BASE_DIR / ".secrets" / "service-account.json"
+notionSecret = BASE_DIR / ".secrets" / "notion.txt"
 calendarID = "a4e2b55b85135005172885d8ae0d81476c38d582d42efcb4883fbd2d08e8e9da@group.calendar.google.com"
 evaluacionesDatabaseID = "c19a268ed8b34fd78ee366b631a0c43d"
 notionFechaProp = "Fecha inicio"
 notionEntregaProp = "Entrega"
 notionRamoRelationProp = "Ramo"
-# -----------------------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------ Main -----------------------------------------------------------------------
 def main():
     try:
         credentials = getCredential()
@@ -34,7 +34,7 @@ def main():
                     print(f"- {item['fecha_inicio']} | {item['evaluacion']} | {ramos}")
     except Exception as e:
         print(f"Error inesperado: {e}")
-# -----------------------------------------------------------------------------------------------------------------------------------
+# ---------------------------------------------- Google Connection ------------------------------------------------------------------
 def getCredential():
     try:
         credential = service_account.Credentials.from_service_account_file(
@@ -74,38 +74,36 @@ def testConnection(service, calendar):
                 print(f"- {start} | {event.get('summary', '(sin título)')}")
     except HttpError as e:
         print(f"Error HTTP de Google Calendar: {e}")
-# -----------------------------------------------------------------------------------------------------------------------------------
-def notionConnection():
-    try:
-        token = notionSecret.read_text(encoding="utf-8").strip()
-        if not token:
-            print("El token de Notion está vacío.")
-            return False
-        headers = {
+# ---------------------------------------------------- Notion  ----------------------------------------------------------------------
+def notionRequest(method, endpoint, payload=None):
+    token = notionSecret.read_text(encoding="utf-8").strip()
+    if not token:
+        raise RuntimeError("El token de Notion está vacío.")
+    response = requests.request(
+        method,
+        f"{"https://api.notion.com/v1"}{endpoint}",
+        headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Notion-Version": "2026-03-11",
-        }
-        search_params = {
-            "filter": {
-                "value": "page",
-                "property": "object",
-            },
+        },
+        json=payload,
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+def notionConnection():
+    try:
+        notionRequest("POST", "/search", {
+            "filter": {"value": "page", "property": "object"},
             "page_size": 1,
-        }
-        response = requests.post(
-            "https://api.notion.com/v1/search",
-            json=search_params,
-            headers=headers,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        print(f"\nHTTP {response.status_code}")
+        })
+        print("\nConexión con Notion OK")
         return True
+    except RuntimeError as e:
+        print(e)
     except requests.exceptions.Timeout:
         print("Timeout al conectar con Notion.")
-        return False
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code if e.response is not None else "desconocido"
         try:
@@ -114,62 +112,23 @@ def notionConnection():
             error_body = e.response.text if e.response is not None else ""
         print(f"Error HTTP al conectar con Notion: {status}")
         print(error_body)
-        return False
     except requests.exceptions.RequestException as e:
         print(f"Error de red al conectar con Notion: {e}")
-        return False
     except ValueError:
         print("La respuesta de Notion no vino en formato JSON válido.")
-        return False
-def notionRequest(method, endpoint, payload=None):
-    token = notionSecret.read_text(encoding="utf-8").strip()
-    if not token:
-        raise RuntimeError("El token de Notion está vacío.")
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Notion-Version": "2026-03-11",
-    }
-
-    response = requests.request(
-        method,
-        f"https://api.notion.com/v1{endpoint}",
-        headers=headers,
-        json=payload,
-        timeout=30,
-    )
-    response.raise_for_status()
-    return response.json()
-def getEvaluacionesDataSourceID():
+    return False
+def getEvaluacionesFromNotion():
     database = notionRequest("GET", f"/databases/{evaluacionesDatabaseID}")
     data_sources = database.get("data_sources", [])
-
     if not data_sources:
         raise RuntimeError("No se encontraron data sources para la base de Evaluaciones.")
 
-    return data_sources[0]["id"]
-def getNotionPageTitle(pageID, cache=None):
-    if cache is not None and pageID in cache:
-        return cache[pageID]
-
-    page = notionRequest("GET", f"/pages/{pageID}")
-    properties = page.get("properties", {})
-
-    title = pageID
-    for prop in properties.values():
-        if prop.get("type") == "title":
-            title = getPlainText(prop.get("title", [])) or pageID
-            break
-
-    if cache is not None:
-        cache[pageID] = title
-
-    return title
-def getEvaluacionesFromNotion():
-    dataSourceID = getEvaluacionesDataSourceID()
+    dataSourceID = data_sources[0]["id"]
     pages = []
     start_cursor = None
+    ramoCache = {}
+
     while True:
         payload = {
             "page_size": 100,
@@ -180,19 +139,14 @@ def getEvaluacionesFromNotion():
                 }
             }
         }
-
         if start_cursor:
             payload["start_cursor"] = start_cursor
-
         data = notionRequest("POST", f"/data_sources/{dataSourceID}/query", payload)
         pages.extend(data.get("results", []))
-
         if not data.get("has_more"):
             break
-
         start_cursor = data.get("next_cursor")
 
-    ramoCache = {}
     evaluaciones = []
 
     for page in pages:
@@ -205,10 +159,21 @@ def getEvaluacionesFromNotion():
         fechaInicio = properties.get(notionFechaProp, {}).get("date") or {}
         entrega = properties.get(notionEntregaProp, {}).get("date") or {}
         ramoRefs = properties.get(notionRamoRelationProp, {}).get("relation", [])
-
-        ramoIDs = [item["id"] for item in ramoRefs]
-        ramos = [getNotionPageTitle(ramoID, ramoCache) for ramoID in ramoIDs]
-
+        ramos = []
+        for item in ramoRefs:
+            ramoID = item["id"]
+            if ramoID in ramoCache:
+                ramos.append(ramoCache[ramoID])
+                continue
+            ramoPage = notionRequest("GET", f"/pages/{ramoID}")
+            ramoProperties = ramoPage.get("properties", {})
+            ramoTitle = ramoID
+            for prop in ramoProperties.values():
+                if prop.get("type") == "title":
+                    ramoTitle = getPlainText(prop.get("title", [])) or ramoID
+                    break
+            ramoCache[ramoID] = ramoTitle
+            ramos.append(ramoTitle)
         evaluaciones.append({
             "notion_page_id": page["id"],
             "evaluacion": evaluacionTitulo,
