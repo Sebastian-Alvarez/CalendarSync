@@ -81,7 +81,7 @@ def notionRequest(method, endpoint, payload=None):
         raise RuntimeError("El token de Notion está vacío.")
     response = requests.request(
         method,
-        f"{"https://api.notion.com/v1"}{endpoint}",
+        f"https://api.notion.com/v1{endpoint}",
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -123,12 +123,12 @@ def getEvaluacionesFromNotion():
     data_sources = database.get("data_sources", [])
     if not data_sources:
         raise RuntimeError("No se encontraron data sources para la base de Evaluaciones.")
-
+    
     dataSourceID = data_sources[0]["id"]
     pages = []
     start_cursor = None
     ramoCache = {}
-
+    
     while True:
         payload = {
             "page_size": 100,
@@ -144,22 +144,33 @@ def getEvaluacionesFromNotion():
         data = notionRequest("POST", f"/data_sources/{dataSourceID}/query", payload)
         pages.extend(data.get("results", []))
         if not data.get("has_more"):
-            break
+            break 
         start_cursor = data.get("next_cursor")
-
+    
     evaluaciones = []
-
+    
     for page in pages:
         properties = page.get("properties", {})
+        # ----------- Título ------------
         evaluacionTitulo = ""
         for prop in properties.values():
             if prop.get("type") == "title":
                 evaluacionTitulo = getPlainText(prop.get("title", []))
                 break
-        fechaInicio = properties.get(notionFechaProp, {}).get("date") or {}
+        fecha = properties.get(notionFechaProp, {}).get("date") or {}
         entrega = properties.get(notionEntregaProp, {}).get("date") or {}
         ramoRefs = properties.get(notionRamoRelationProp, {}).get("relation", [])
+        fechaEvaluacion = {}
         ramos = []
+        # ---- Evaluación de Fechas -----
+        if(entrega.get("start") is None):
+            fechaEvaluacion = fecha
+        else:
+            if(datetime.datetime.now().isoformat() > fecha.get("start")):
+                fechaEvaluacion = entrega
+            else:
+                fechaEvaluacion = fecha
+        # ------------ Ramos ------------
         for item in ramoRefs:
             ramoID = item["id"]
             if ramoID in ramoCache:
@@ -177,11 +188,12 @@ def getEvaluacionesFromNotion():
         evaluaciones.append({
             "notion_page_id": page["id"],
             "evaluacion": evaluacionTitulo,
-            "fecha_inicio": fechaInicio.get("start"),
-            "fecha_fin": entrega.get("end") or entrega.get("start") or fechaInicio.get("end"),
-            "time_zone": fechaInicio.get("time_zone") or entrega.get("time_zone"),
+            "fecha_inicio": fechaEvaluacion.get("start"),
+            "fecha_fin": fechaEvaluacion.get("end"),
+            "time_zone": fechaEvaluacion.get("time_zone") or fecha.get("time_zone"),
             "ramos": ramos,
         })
+    
     return evaluaciones
 # -----------------------------------------------------------------------------------------------------------------------------------
 def getPlainText(items):
