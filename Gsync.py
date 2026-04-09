@@ -9,36 +9,32 @@ from googleapiclient.errors import HttpError
 # -------------------------------------------------- Var. Globales ------------------------------------------------------------------
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 BASE_DIR = Path(__file__).resolve().parent
-saCredentials = BASE_DIR / ".secrets" / "service-account.json"
-notionSecret = BASE_DIR / ".secrets" / "notion.txt"
+saCredentials = "service-account.json"
+notionSecret = "notion.txt"
+ramos_list = "ramosIDs.json"
 calendarID = "a4e2b55b85135005172885d8ae0d81476c38d582d42efcb4883fbd2d08e8e9da@group.calendar.google.com"
-evaluacionesDatabaseID = "c19a268ed8b34fd78ee366b631a0c43d"
-notionFechaProp = "Fecha inicio"
-notionEntregaProp = "Entrega"
-notionRamoRelationProp = "Ramo"
+NotionDataBaseID = "c19a268ed8b34fd78ee366b631a0c43d"
+NotionDataSourceID = "42740aed-26d6-4d8e-89c5-5baec53d318a"
+NotionDataSourceTitle = "Titulo"
 # ------------------------------------------------------ Main -----------------------------------------------------------------------
 def main():
     try:
         credentials = getCredential()
         service = connectGCal(credentials)
         calendar = service.calendars().get(calendarId=calendarID).execute()
-        testConnection(service, calendar)
-        if notionConnection():
-            evaluaciones = getEvaluacionesFromNotion()
-            print("\nEvaluaciones encontradas:")
-            if not evaluaciones:
-                print("No se encontraron evaluaciones con fecha.")
-            else:
-                for item in evaluaciones:
-                    ramos = ", ".join(item["ramos"]) if item["ramos"] else "(sin ramo)"
-                    print(f"- {item['fecha_inicio']} | {item['evaluacion']} | {ramos}")
+        testGCConnection(service, calendar)
+        testNotionConnection()
+        eventosNotion = getEvaluacionesFromNotion()
+        filteredNotionEvnets = filterNoSyncEvents(eventosNotion)
+        for event in filteredNotionEvnets:
+            uploadNew2GCal(service, event)
     except Exception as e:
         print(f"Error inesperado: {e}")
-# ---------------------------------------------- Google Connection ------------------------------------------------------------------
+# ------------------------------------------------ Google Connection ----------------------------------------------------------------
 def getCredential():
     try:
         credential = service_account.Credentials.from_service_account_file(
-            str(saCredentials),
+            str(BASE_DIR / ".secrets" / saCredentials),
             scopes=SCOPES,
         )
         return credential
@@ -52,10 +48,8 @@ def connectGCal(credentials):
     except Exception as e:
         print(f"Error al conectar con Google Calendar: {e}")
         sys.exit()
-def testConnection(service, calendar):
+def testGCConnection(service, calendar):
     try:
-        print(f"Calendario: {calendar['summary']}")
-        print(f"Zona horaria: {calendar['timeZone']}")
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         events_result = service.events().list(
             calendarId=calendarID,
@@ -65,18 +59,72 @@ def testConnection(service, calendar):
             orderBy="startTime",
         ).execute()
         events = events_result.get("items", [])
-        print("\nPróximos eventos:")
+        print(f"Conexión con Google Calendar OK\nCalendario: {calendar.get('summary')}")
         if not events:
             print("No hay eventos próximos.")
-        else:
-            for event in events:
-                start = event["start"].get("dateTime", event["start"].get("date"))
-                print(f"- {start} | {event.get('summary', '(sin título)')}")
     except HttpError as e:
         print(f"Error HTTP de Google Calendar: {e}")
-# ---------------------------------------------------- Notion  ----------------------------------------------------------------------
+def printEventoGcal(event):
+    fecha = (
+        event.get("start", {}).get("dateTime")
+        or event.get("start", {}).get("date")
+        or "(sin fecha)"
+    )
+    titulo = event.get("summary") or "(sin título)"
+    ramo = (
+        event.get("extendedProperties", {})
+        .get("private", {})
+        .get("ramo")
+        or "(sin ramo)"
+    )
+    print(f"{fecha} | {titulo} | {ramo} |")
+# ------------------------- CRUD ---------------------------
+def createGoogleEvent(service, event):
+    try:
+        created_event = service.events().insert(
+            calendarId=calendarID,
+            body=event
+        ).execute()
+        print("Evento creado en Google Calendar:\t")
+        printEventoGcal(created_event)
+        return created_event
+    except HttpError as e:
+        print(f"Error al crear evento en Google Calendar: {e}")
+        return None
+def updateGoogleEvent(service, eventId, event):
+    try:
+        updated_event = service.events().update(
+            calendarId=calendarID, 
+            eventId=eventId, 
+            body=event
+        ).execute()
+        print("Evento actualizado en Google Calendar: \t")
+        printEventoGcal(updated_event)
+    except HttpError as e:
+        print(f"Error al actualizar evento en Google Calendar: {e}")
+def deleteGoogleEvent(service, id):
+    try:
+        service.events().delete(
+            calendarId=calendarID, 
+            eventId=id
+        ).execute()
+        print(f"Evento eliminado en Google Calendar: {id}")
+    except HttpError as e:
+        print(f"Error al eliminar evento en Google Calendar: {e}")
+def getGoogleEvents(service, id):
+    try:
+        event = service.events().get(
+            calendarId=calendarID, 
+            eventId=id
+        ).execute()
+        print(f"Evento obtenido de Google Calendar: {event.get('htmlLink')}")
+        return event
+    except HttpError as e:
+        print(f"Error al obtener evento de Google Calendar: {e}")
+        return None
+# ----------------------------------------------------- Notion  ---------------------------------------------------------------------
 def notionRequest(method, endpoint, payload=None):
-    token = notionSecret.read_text(encoding="utf-8").strip()
+    token = (BASE_DIR / ".secrets" / notionSecret).read_text(encoding="utf-8").strip()
     if not token:
         raise RuntimeError("El token de Notion está vacío.")
     response = requests.request(
@@ -92,7 +140,7 @@ def notionRequest(method, endpoint, payload=None):
     )
     response.raise_for_status()
     return response.json()
-def notionConnection():
+def testNotionConnection():
     try:
         notionRequest("POST", "/search", {
             "filter": {"value": "page", "property": "object"},
@@ -119,21 +167,21 @@ def notionConnection():
 
     return False
 def getEvaluacionesFromNotion():
-    database = notionRequest("GET", f"/databases/{evaluacionesDatabaseID}")
+    database = notionRequest("GET", f"/databases/{NotionDataBaseID}")
     data_sources = database.get("data_sources", [])
     if not data_sources:
         raise RuntimeError("No se encontraron data sources para la base de Evaluaciones.")
     
+    _, ramos_por_id = loadRamosMaps()
     dataSourceID = data_sources[0]["id"]
     pages = []
     start_cursor = None
     ramoCache = {}
-    
     while True:
         payload = {
             "page_size": 100,
             "filter": {
-                "property": notionFechaProp,
+                "property": "Fecha inicio",
                 "date": {
                     "is_not_empty": True
                 }
@@ -146,9 +194,8 @@ def getEvaluacionesFromNotion():
         if not data.get("has_more"):
             break 
         start_cursor = data.get("next_cursor")
-    
     evaluaciones = []
-    
+    # ---------------- Propiedades ----------------
     for page in pages:
         properties = page.get("properties", {})
         # ----------- Título ------------
@@ -157,12 +204,10 @@ def getEvaluacionesFromNotion():
             if prop.get("type") == "title":
                 evaluacionTitulo = getPlainText(prop.get("title", []))
                 break
-        fecha = properties.get(notionFechaProp, {}).get("date") or {}
-        entrega = properties.get(notionEntregaProp, {}).get("date") or {}
-        ramoRefs = properties.get(notionRamoRelationProp, {}).get("relation", [])
-        fechaEvaluacion = {}
-        ramos = []
         # ---- Evaluación de Fechas -----
+        fechaEvaluacion = {}
+        fecha = properties.get("Fecha inicio", {}).get("date") or {}
+        entrega = properties.get("Entrega", {}).get("date") or {}
         if(entrega.get("start") is None):
             fechaEvaluacion = fecha
         else:
@@ -171,33 +216,224 @@ def getEvaluacionesFromNotion():
             else:
                 fechaEvaluacion = fecha
         # ------------ Ramos ------------
+        ramos = []
+        ramoRefs = properties.get("Ramo", {}).get("relation", [])
         for item in ramoRefs:
-            ramoID = item["id"]
-            if ramoID in ramoCache:
-                ramos.append(ramoCache[ramoID])
+            ramo_id = item.get("id")
+            if not ramo_id:
                 continue
-            ramoPage = notionRequest("GET", f"/pages/{ramoID}")
-            ramoProperties = ramoPage.get("properties", {})
-            ramoTitle = ramoID
-            for prop in ramoProperties.values():
-                if prop.get("type") == "title":
-                    ramoTitle = getPlainText(prop.get("title", [])) or ramoID
-                    break
-            ramoCache[ramoID] = ramoTitle
-            ramos.append(ramoTitle)
+
+            ramos.append({
+                "nombre": ramos_por_id.get(normalizeNotionId(ramo_id), "RAMO_NO_MAPEADO"),
+                "id": ramo_id,
+            })
+
+        # ------------ GoogleCal ------------
+        gcalID = getPlainText(properties.get("google_id", {}).get("rich_text", []))
+        # -----------------------------------
         evaluaciones.append({
             "notion_page_id": page["id"],
-            "evaluacion": evaluacionTitulo,
+            "title": evaluacionTitulo,
             "fecha_inicio": fechaEvaluacion.get("start"),
             "fecha_fin": fechaEvaluacion.get("end"),
             "time_zone": fechaEvaluacion.get("time_zone") or fecha.get("time_zone"),
             "ramos": ramos,
+            "gcal_event_id": gcalID,
         })
+    print("Eventos de Notion encontradas:",len(pages))
+    if not evaluaciones:
+        print("No se encontraron evaluaciones.")
     
     return evaluaciones
+def printEventoNotion(evento):
+    ramos = ", ".join(
+        f"{ramo['nombre']} ({ramo['id']})" for ramo in evento["ramos"]
+    ) if evento["ramos"] else "(sin ramo)"
+    print(f"- {evento['fecha_inicio']} | {evento['title']} | {ramos} | {evento['gcal_event_id']}")
+def filterNoSyncEvents(eventos):
+    noSync = []
+    for item in eventos:
+        if not item["gcal_event_id"]:
+            noSync.append(item)
+    print("Eventos de Notion sin sincronizar:",len(noSync),"\n")
+    return noSync
+def addGoogleIDtoEvent(gcalEventId):
+    return {
+        "google_id": {
+            "rich_text": [
+                {
+                    "type": "text",
+                    "text": {"content": str(gcalEventId)}
+                }
+            ]
+        }
+    }
+def normalizeNotionId(value):
+    if not value:
+        return ""
+    return str(value).replace("-", "").lower()
+# ------------------------- CRUD ---------------------------
+def createNotionEvent(eventInfo):
+    try:
+        newEvent = notionRequest(
+            "POST",
+            "/pages",
+            {
+                "parent": {
+                    "type": "data_source_id",
+                    "data_source_id": NotionDataSourceID,
+                },
+                "properties": eventInfo,
+            }
+        )
+        print(f"Evento creado en Notion: {newEvent.get('url')}")
+        return newEvent
+    except Exception as e:
+        print(f"Error al crear evento en Notion: {e}")
+        return None   
+def updateNotionEvent(eventId, eventInfo):
+    try:
+        updatedPage = notionRequest(
+            "PATCH",
+            f"/pages/{eventId}",
+            {"properties": eventInfo}
+        )
+        print(f"Evento actualizado en Notion: {updatedPage.get('url')}")
+        return updatedPage
+    except Exception as e:
+        print(f"Error al actualizar evento en Notion: {e}")
+        return None
+def deleteNotionEvent(id):
+    try:
+        deletedPage = notionRequest(
+            "PATCH",
+            f"/pages/{id}",
+            {
+                "in_trash": True
+            }
+        )
+        print(f"Evento enviado a la papelera de Notion: {deletedPage.get('url')}")
+        return deletedPage
+    except Exception as e:
+        print(f"Error al eliminar evento en Notion: {e}")
+        return None
+def getNotionEvent(id):
+    try:
+        event = notionRequest(
+            "GET",
+            f"/pages/{id}"
+        )
+        print(f"Evento obtenido de Notion: {event.get('url')}")
+        return event
+    except Exception as e:
+        print(f"Error al obtener evento de Notion: {e}")
+        return None
 # -----------------------------------------------------------------------------------------------------------------------------------
 def getPlainText(items):
     return "".join(item.get("plain_text", "") for item in items)
+def formatNotion2GCal(notionEvent):
+    inicio = notionEvent.get("fecha_inicio")
+    fin = notionEvent.get("fecha_fin")
+    tz = notionEvent.get("time_zone", "America/Santiago")
+    nombres_ramos = getRamoNames(notionEvent.get("ramos", []))
+    descripcion_ramos = ", ".join(nombres_ramos) if nombres_ramos else "(sin ramo)"
+    ramo_private = ", ".join(nombres_ramos)
+
+    if not inicio:
+        raise ValueError("El evento no tiene fecha_inicio")
+
+    if "T" not in inicio:
+        return {
+            "summary": notionEvent["title"],
+            "description": f"Ramo: {descripcion_ramos}",
+            "start": {"date": inicio},
+            "end": {"date": fin or inicio},
+            "extendedProperties": {
+                "private": {
+                    "ramo": ramo_private
+                }
+            }
+        }
+
+    return {
+        "summary": notionEvent["title"],
+        "description": f"Ramo: {descripcion_ramos}",
+        "start": {
+            "dateTime": inicio,
+            "timeZone": tz,
+        },
+        "end": {
+            "dateTime": fin or inicio,
+            "timeZone": tz,
+        },
+        "extendedProperties": {
+            "private": {
+                "ramo": ramo_private
+            }
+        }
+    }
+def uploadNew2GCal(service, notionEvent):
+    event = formatNotion2GCal(notionEvent)
+    createdEvent = createGoogleEvent(service, event)
+
+    if not createdEvent:
+        return None
+
+    gcalEventId = createdEvent.get("id")
+    if not gcalEventId:
+        print("No se pudo obtener el id del evento creado en Google Calendar.")
+        return createdEvent
+
+    updateNotionEvent(
+        notionEvent["notion_page_id"],
+        addGoogleIDtoEvent(gcalEventId)
+    )
+
+    return createdEvent
+def loadRamosMaps():
+    try:
+        path = BASE_DIR / ramos_list
+        with path.open("r", encoding="utf-8") as f:
+            ramos_por_nombre = json.load(f)
+    except FileNotFoundError:
+        raise RuntimeError(f"No se encontró el archivo {ramos_list} en {BASE_DIR}")
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"{ramos_list} no contiene un JSON válido: {e}")
+
+    if not isinstance(ramos_por_nombre, dict):
+        raise RuntimeError(f"{ramos_list} debe tener formato {{'RAMO': 'id'}}")
+
+    ramos_por_id = {
+        normalizeNotionId(ramo_id): nombre
+        for nombre, ramo_id in ramos_por_nombre.items()
+    }
+    return ramos_por_nombre, ramos_por_id
+def getRamoNames(ramos):
+    nombres = []
+    for ramo in ramos:
+        if isinstance(ramo, dict):
+            nombre = ramo.get("nombre")
+            if nombre:
+                nombres.append(nombre)
+        elif isinstance(ramo, str):
+            nombres.append(ramo)
+    return nombres
+def buildRamoRelation(ramos_input):
+    ramos_por_nombre, _ = loadRamosMaps()
+    relation = []
+
+    for ramo in ramos_input:
+        if isinstance(ramo, dict):
+            ramo_id = ramo.get("id") or ramos_por_nombre.get(ramo.get("nombre"))
+        else:
+            ramo_id = ramos_por_nombre.get(ramo)
+
+        if ramo_id:
+            relation.append({"id": ramo_id})
+        else:
+            print(f"Ramo no encontrado en {ramos_list}: {ramo}")
+
+    return {"Ramo": {"relation": relation}}
 # -----------------------------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
     print("")
