@@ -9,19 +9,19 @@ from googleapiclient.errors import HttpError
 # -------------------------------------------------- Var. Globales ------------------------------------------------------------------
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 BASE_DIR = Path(__file__).resolve().parent
-saCredentials = "service-account.json"
-notionSecret = "notion.txt"
-ramos_list = "ramosIDs.json"
-calendarID = "a4e2b55b85135005172885d8ae0d81476c38d582d42efcb4883fbd2d08e8e9da@group.calendar.google.com"
-NotionDataBaseID = "c19a268ed8b34fd78ee366b631a0c43d"
-NotionDataSourceID = "42740aed-26d6-4d8e-89c5-5baec53d318a"
-NotionDataSourceTitle = "Titulo"
+SERVICE_ACCOUNT = "service-account.json"
+NOTION_SECRET = "notion.txt"
+LISTA_RAMOS = "ramosIDs.json"
+CALENDAR_ID = "a4e2b55b85135005172885d8ae0d81476c38d582d42efcb4883fbd2d08e8e9da@group.calendar.google.com"
+NOTION_DATABASE_ID = "c19a268ed8b34fd78ee366b631a0c43d"
+NOTION_DATASOURCE_ID = "42740aed-26d6-4d8e-89c5-5baec53d318a"
+NOTION_DATASOURCE_TITLE = "Titulo"
 # ------------------------------------------------------ Main -----------------------------------------------------------------------
 def main():
     try:
         credentials = getCredential()
         service = connectGCal(credentials)
-        calendar = service.calendars().get(calendarId=calendarID).execute()
+        calendar = service.calendars().get(calendarId=CALENDAR_ID).execute()
         testGCConnection(service, calendar)
         testNotionConnection()
         eventosNotion = getEvaluacionesFromNotion()
@@ -34,7 +34,7 @@ def main():
 def getCredential():
     try:
         credential = service_account.Credentials.from_service_account_file(
-            str(BASE_DIR / ".secrets" / saCredentials),
+            str(BASE_DIR / ".secrets" / SERVICE_ACCOUNT),
             scopes=SCOPES,
         )
         return credential
@@ -52,7 +52,7 @@ def testGCConnection(service, calendar):
     try:
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         events_result = service.events().list(
-            calendarId=calendarID,
+            calendarId=CALENDAR_ID,
             timeMin=now,
             maxResults=5,
             singleEvents=True,
@@ -82,7 +82,7 @@ def printEventoGcal(event):
 def createGoogleEvent(service, event):
     try:
         created_event = service.events().insert(
-            calendarId=calendarID,
+            calendarId=CALENDAR_ID,
             body=event
         ).execute()
         print("Evento creado en Google Calendar:\t")
@@ -94,7 +94,7 @@ def createGoogleEvent(service, event):
 def updateGoogleEvent(service, eventId, event):
     try:
         updated_event = service.events().update(
-            calendarId=calendarID, 
+            calendarId=CALENDAR_ID, 
             eventId=eventId, 
             body=event
         ).execute()
@@ -105,7 +105,7 @@ def updateGoogleEvent(service, eventId, event):
 def deleteGoogleEvent(service, id):
     try:
         service.events().delete(
-            calendarId=calendarID, 
+            calendarId=CALENDAR_ID, 
             eventId=id
         ).execute()
         print(f"Evento eliminado en Google Calendar: {id}")
@@ -114,7 +114,7 @@ def deleteGoogleEvent(service, id):
 def getGoogleEvents(service, id):
     try:
         event = service.events().get(
-            calendarId=calendarID, 
+            calendarId=CALENDAR_ID, 
             eventId=id
         ).execute()
         print(f"Evento obtenido de Google Calendar: {event.get('htmlLink')}")
@@ -124,7 +124,7 @@ def getGoogleEvents(service, id):
         return None
 # ----------------------------------------------------- Notion  ---------------------------------------------------------------------
 def notionRequest(method, endpoint, payload=None):
-    token = (BASE_DIR / ".secrets" / notionSecret).read_text(encoding="utf-8").strip()
+    token = (BASE_DIR / ".secrets" / NOTION_SECRET).read_text(encoding="utf-8").strip()
     if not token:
         raise RuntimeError("El token de Notion está vacío.")
     response = requests.request(
@@ -167,7 +167,7 @@ def testNotionConnection():
 
     return False
 def getEvaluacionesFromNotion():
-    database = notionRequest("GET", f"/databases/{NotionDataBaseID}")
+    database = notionRequest("GET", f"/databases/{NOTION_DATABASE_ID}")
     data_sources = database.get("data_sources", [])
     if not data_sources:
         raise RuntimeError("No se encontraron data sources para la base de Evaluaciones.")
@@ -281,7 +281,7 @@ def createNotionEvent(eventInfo):
             {
                 "parent": {
                     "type": "data_source_id",
-                    "data_source_id": NotionDataSourceID,
+                    "data_source_id": NOTION_DATASOURCE_ID,
                 },
                 "properties": eventInfo,
             }
@@ -392,16 +392,16 @@ def uploadNew2GCal(service, notionEvent):
     return createdEvent
 def loadRamosMaps():
     try:
-        path = BASE_DIR / ramos_list
+        path = BASE_DIR / LISTA_RAMOS
         with path.open("r", encoding="utf-8") as f:
             ramos_por_nombre = json.load(f)
     except FileNotFoundError:
-        raise RuntimeError(f"No se encontró el archivo {ramos_list} en {BASE_DIR}")
+        raise RuntimeError(f"No se encontró el archivo {LISTA_RAMOS} en {BASE_DIR}")
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"{ramos_list} no contiene un JSON válido: {e}")
+        raise RuntimeError(f"{LISTA_RAMOS} no contiene un JSON válido: {e}")
 
     if not isinstance(ramos_por_nombre, dict):
-        raise RuntimeError(f"{ramos_list} debe tener formato {{'RAMO': 'id'}}")
+        raise RuntimeError(f"{LISTA_RAMOS} debe tener formato {{'RAMO': 'id'}}")
 
     ramos_por_id = {
         normalizeNotionId(ramo_id): nombre
@@ -431,7 +431,7 @@ def buildRamoRelation(ramos_input):
         if ramo_id:
             relation.append({"id": ramo_id})
         else:
-            print(f"Ramo no encontrado en {ramos_list}: {ramo}")
+            print(f"Ramo no encontrado en {LISTA_RAMOS}: {ramo}")
 
     return {"Ramo": {"relation": relation}}
 # -----------------------------------------------------------------------------------------------------------------------------------
