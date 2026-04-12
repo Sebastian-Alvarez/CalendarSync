@@ -25,4 +25,4 @@ jobs:
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        run: python Csync.pyy
+        run: python CSync.py
