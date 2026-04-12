@@ -71,13 +71,7 @@ def printEventoGcal(event):
         or "(sin fecha)"
     )
     titulo = event.get("summary") or "(sin título)"
-    ramo = (
-        event.get("extendedProperties", {})
-        .get("private", {})
-        .get("ramo")
-        or "(sin ramo)"
-    )
-    print(f"{fecha} | {titulo} | {ramo} |")
+    print(f"{fecha} | {titulo}")
 # ------------------------- CRUD ---------------------------
 def createGoogleEvent(service, event):
     try:
@@ -336,28 +330,27 @@ def formatNotion2GCal(notionEvent):
     fin = notionEvent.get("fecha_fin")
     tz = notionEvent.get("time_zone", "America/Santiago")
     nombres_ramos = getRamoNames(notionEvent.get("ramos", []))
-    descripcion_ramos = ", ".join(nombres_ramos) if nombres_ramos else "(sin ramo)"
-    ramo_private = ", ".join(nombres_ramos)
+    ramo = ", ".join(nombres_ramos)
 
     if not inicio:
         raise ValueError("El evento no tiene fecha_inicio")
 
     if "T" not in inicio:
         return {
-            "summary": notionEvent["title"],
-            "description": f"Ramo: {descripcion_ramos}",
+            "summary": f"{notionEvent['title']} | {ramo}",
+            "description": "",
             "start": {"date": inicio},
             "end": {"date": fin or inicio},
             "extendedProperties": {
                 "private": {
-                    "ramo": ramo_private
+                    "notion_event_ID": notionEvent["notion_page_id"],
                 }
             }
         }
 
     return {
-        "summary": notionEvent["title"],
-        "description": f"Ramo: {descripcion_ramos}",
+        "summary": f"{notionEvent['title']} | {ramo}",
+        "description": "",
         "start": {
             "dateTime": inicio,
             "timeZone": tz,
@@ -368,7 +361,7 @@ def formatNotion2GCal(notionEvent):
         },
         "extendedProperties": {
             "private": {
-                "ramo": ramo_private
+                "notion_event_ID": notionEvent["notion_page_id"],
             }
         }
     }
