@@ -8,7 +8,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 # -------------------------------------------------- Var. Globales ------------------------------------------------------------------
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIRECTORY = Path(__file__).resolve().parent
 SERVICE_ACCOUNT = "service-account.json"
 NOTION_SECRET = "notion.txt"
 LISTA_RAMOS = "ramosIDs.json"
@@ -34,7 +34,7 @@ def main():
 def getCredential():
     try:
         credential = service_account.Credentials.from_service_account_file(
-            str(BASE_DIR / ".secrets" / SERVICE_ACCOUNT),
+            str(BASE_DIRECTORY / ".secrets" / SERVICE_ACCOUNT),
             scopes=SCOPES,
         )
         return credential
@@ -124,7 +124,7 @@ def getGoogleEvents(service, id):
         return None
 # ----------------------------------------------------- Notion  ---------------------------------------------------------------------
 def notionRequest(method, endpoint, payload=None):
-    token = (BASE_DIR / ".secrets" / NOTION_SECRET).read_text(encoding="utf-8").strip()
+    token = (BASE_DIRECTORY / ".secrets" / NOTION_SECRET).read_text(encoding="utf-8").strip()
     if not token:
         raise RuntimeError("El token de Notion está vacío.")
     response = requests.request(
@@ -372,31 +372,13 @@ def formatNotion2GCal(notionEvent):
             }
         }
     }
-def uploadNew2GCal(service, notionEvent):
-    event = formatNotion2GCal(notionEvent)
-    createdEvent = createGoogleEvent(service, event)
-
-    if not createdEvent:
-        return None
-
-    gcalEventId = createdEvent.get("id")
-    if not gcalEventId:
-        print("No se pudo obtener el id del evento creado en Google Calendar.")
-        return createdEvent
-
-    updateNotionEvent(
-        notionEvent["notion_page_id"],
-        addGoogleIDtoEvent(gcalEventId)
-    )
-
-    return createdEvent
 def loadRamosMaps():
     try:
-        path = BASE_DIR / LISTA_RAMOS
+        path = BASE_DIRECTORY / LISTA_RAMOS
         with path.open("r", encoding="utf-8") as f:
             ramos_por_nombre = json.load(f)
     except FileNotFoundError:
-        raise RuntimeError(f"No se encontró el archivo {LISTA_RAMOS} en {BASE_DIR}")
+        raise RuntimeError(f"No se encontró el archivo {LISTA_RAMOS} en {BASE_DIRECTORY}")
     except json.JSONDecodeError as e:
         raise RuntimeError(f"{LISTA_RAMOS} no contiene un JSON válido: {e}")
 
@@ -434,6 +416,28 @@ def buildRamoRelation(ramos_input):
             print(f"Ramo no encontrado en {LISTA_RAMOS}: {ramo}")
 
     return {"Ramo": {"relation": relation}}
+def uploadNew2GCal(service, notionEvent):
+    event = formatNotion2GCal(notionEvent)
+    createdEvent = createGoogleEvent(service, event)
+
+    if not createdEvent:
+        return None
+
+    gcalEventId = createdEvent.get("id")
+    if not gcalEventId:
+        print("No se pudo obtener el id del evento creado en Google Calendar.")
+        return None
+
+    notionResult = updateNotionEvent(
+        notionEvent["notion_page_id"],
+        addGoogleIDtoEvent(gcalEventId)
+    )
+
+    if not notionResult:
+        deleteGoogleEvent(service, gcalEventId)
+        return None
+
+    return createdEvent
 # -----------------------------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
     print("")
