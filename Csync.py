@@ -370,11 +370,11 @@ def formatNotion2GCal(notionEvent):
     }
 def loadRamosMaps():
     try:
-        path = BASE_DIRECTORY / LISTA_RAMOS
+        path = LISTA_RAMOS
         with path.open("r", encoding="utf-8") as f:
             ramos_por_nombre = json.load(f)
     except FileNotFoundError:
-        raise RuntimeError(f"No se encontró el archivo {LISTA_RAMOS} en {BASE_DIRECTORY}")
+        raise RuntimeError(f"No se encontró el archivo {LISTA_RAMOS}")
     except json.JSONDecodeError as e:
         raise RuntimeError(f"{LISTA_RAMOS} no contiene un JSON válido: {e}")
 
