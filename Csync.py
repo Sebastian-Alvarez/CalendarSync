@@ -1,24 +1,22 @@
+import os
 import sys
 import json
 import datetime
 import requests
-from pathlib import Path
+from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 # -------------------------------------------------- Var. Globales ------------------------------------------------------------------
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-BASE_DIRECTORY = Path(__file__).resolve().parent
-SERVICE_ACCOUNT = "service-account.json"
-NOTION_SECRET = "notion.txt"
 LISTA_RAMOS = "ramosIDs.json"
 CALENDAR_ID = "a4e2b55b85135005172885d8ae0d81476c38d582d42efcb4883fbd2d08e8e9da@group.calendar.google.com"
 NOTION_DATABASE_ID = "c19a268ed8b34fd78ee366b631a0c43d"
 NOTION_DATASOURCE_ID = "42740aed-26d6-4d8e-89c5-5baec53d318a"
-NOTION_DATASOURCE_TITLE = "Titulo"
 # ------------------------------------------------------ Main -----------------------------------------------------------------------
 def main():
     try:
+        load_dotenv()
         credentials = getCredential()
         service = connectGCal(credentials)
         calendar = service.calendars().get(calendarId=CALENDAR_ID).execute()
@@ -33,8 +31,13 @@ def main():
 # ------------------------------------------------ Google Connection ----------------------------------------------------------------
 def getCredential():
     try:
-        credential = service_account.Credentials.from_service_account_file(
-            str(BASE_DIRECTORY / ".secrets" / SERVICE_ACCOUNT),
+        service_account = os.getenv("GOOGLE_SERVICE_ACCOUNT")
+        if not service_account:
+            raise RuntimeError("Credenciales de Google no encontradas.")
+        service_account_info = json.loads(service_account)
+
+        credential = service_account.Credentials.from_service_account_info(
+            service_account_info,
             scopes=SCOPES,
         )
         return credential
@@ -118,7 +121,7 @@ def getGoogleEvents(service, id):
         return None
 # ----------------------------------------------------- Notion  ---------------------------------------------------------------------
 def notionRequest(method, endpoint, payload=None):
-    token = (BASE_DIRECTORY / ".secrets" / NOTION_SECRET).read_text(encoding="utf-8").strip()
+    token = os.getenv("NOTION_TOKEN")
     if not token:
         raise RuntimeError("El token de Notion está vacío.")
     response = requests.request(
