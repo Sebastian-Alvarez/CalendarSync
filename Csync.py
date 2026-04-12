@@ -31,10 +31,10 @@ def main():
 # ------------------------------------------------ Google Connection ----------------------------------------------------------------
 def getCredential():
     try:
-        service_account = os.getenv("GOOGLE_SERVICE_ACCOUNT")
-        if not service_account:
+        service_account_credentials = os.getenv("GOOGLE_SERVICE_ACCOUNT")
+        if not service_account_credentials:
             raise RuntimeError("Credenciales de Google no encontradas.")
-        service_account_info = json.loads(service_account)
+        service_account_info = json.loads(service_account_credentials)
 
         credential = service_account.Credentials.from_service_account_info(
             service_account_info,
@@ -370,8 +370,7 @@ def formatNotion2GCal(notionEvent):
     }
 def loadRamosMaps():
     try:
-        path = LISTA_RAMOS
-        with path.open("r", encoding="utf-8") as f:
+        with open(LISTA_RAMOS, "r", encoding="utf-8") as f:
             ramos_por_nombre = json.load(f)
     except FileNotFoundError:
         raise RuntimeError(f"No se encontró el archivo {LISTA_RAMOS}")
