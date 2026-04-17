@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Checkout repositorio
-        uses: actions/setup-python@v5
+        uses: actions/checkout@v4
 
       - name: Configurar Python
         uses: actions/setup-python@v5
