@@ -23,9 +23,11 @@ def main():
         testGCConnection(service, calendar)
         testNotionConnection()
         eventosNotion = getEvaluacionesFromNotion()
-        filteredNotionEvnets = filterNoSyncEvents(eventosNotion)
-        for event in filteredNotionEvnets:
+        filteredNotionEvents = filterNoSyncEvents(eventosNotion)
+        for event in filteredNotionEvents:
             uploadNew2GCal(service, event)
+        syncedEvents = filterSyncedEvents(eventosNotion)
+        syncUpdatedEvents(service, syncedEvents)
     except Exception as e:
         print(f"Error inesperado: {e}")
 # ------------------------------------------------ Google Connection ----------------------------------------------------------------
@@ -75,6 +77,23 @@ def printEventoGcal(event):
     )
     titulo = event.get("summary") or "(sin título)"
     print(f"{fecha} | {titulo}")
+def extractDatesFromGCal(gcalEvent):
+    start = gcalEvent.get("start", {})
+    end   = gcalEvent.get("end", {})
+
+    fecha_inicio = start.get("dateTime") or start.get("date")
+    fecha_fin    = end.get("dateTime")   or end.get("date")
+    time_zone    = start.get("timeZone")
+
+    date_obj = {"start": fecha_inicio}
+    if fecha_fin and fecha_fin != fecha_inicio:
+        date_obj["end"] = fecha_fin
+    if time_zone:
+        date_obj["time_zone"] = time_zone
+
+    return {
+        "Fecha inicio": {"date": date_obj}
+    }
 # ------------------------- CRUD ---------------------------
 def createGoogleEvent(service, event):
     try:
@@ -236,6 +255,7 @@ def getEvaluacionesFromNotion():
             "time_zone": fechaEvaluacion.get("time_zone") or fecha.get("time_zone"),
             "ramos": ramos,
             "gcal_event_id": gcalID,
+            "last_edited_time": page.get("last_edited_time"),
         })
     print("Eventos de Notion encontradas:",len(pages))
     if not evaluaciones:
@@ -254,6 +274,10 @@ def filterNoSyncEvents(eventos):
             noSync.append(item)
     print("Eventos de Notion sin sincronizar:",len(noSync),"\n")
     return noSync
+def filterSyncedEvents(eventos):
+    synced = [e for e in eventos if e["gcal_event_id"]]
+    print("Eventos de Notion ya sincronizados:", len(synced))
+    return synced
 def addGoogleIDtoEvent(gcalEventId):
     return {
         "google_id": {
@@ -433,6 +457,30 @@ def uploadNew2GCal(service, notionEvent):
         return None
 
     return createdEvent
+def syncUpdatedEvents(service, eventos):
+    print("\n--- Revisando eventos sincronizados ---")
+    for notionEvent in eventos:
+        gcalEvent = getGoogleEvents(service, notionEvent["gcal_event_id"])
+        if not gcalEvent:
+            continue
+
+        notion_updated = notionEvent.get("last_edited_time")
+        gcal_updated   = gcalEvent.get("updated")
+
+        if not notion_updated or not gcal_updated:
+            continue
+
+        if notion_updated > gcal_updated:
+            print(f"Notion más nuevo → actualizando GCal: {notionEvent['title']}")
+            updateGoogleEvent(service, notionEvent["gcal_event_id"], formatNotion2GCal(notionEvent))
+
+        elif gcal_updated > notion_updated:
+            print(f"GCal más nuevo → actualizando Notion: {notionEvent['title']}")
+            fechas = extractDatesFromGCal(gcalEvent)
+            updateNotionEvent(notionEvent["notion_page_id"], fechas)
+
+        else:
+            print(f"Sin cambios: {notionEvent['title']}")
 # -----------------------------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
     print("")
